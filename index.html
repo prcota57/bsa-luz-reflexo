@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>BSA - Lâmpada de Reflexo</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; user-select:none; }
+  html, body { width:100%; height:100%; overflow:hidden; font-family:-apple-system, system-ui, sans-serif; }
+
+  #app {
+    width:100vw; height:100vh;
+    display:flex; align-items:center; justify-content:center;
+    transition: background-color 0.15s ease;
+    background:#7a0d0d;
+    position:relative;
+  }
+  #app.on { background:#0d7a1f; }
+
+  #startScreen {
+    position:absolute; inset:0;
+    background:#111; color:#fff;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    z-index:50; text-align:center; padding:24px;
+  }
+  #startScreen h1 { font-size:28px; margin-bottom:16px; }
+  #startScreen p { font-size:16px; opacity:0.8; margin-bottom:28px; max-width:340px; }
+  #startBtn {
+    background:#2b7cff; color:#fff; border:none; border-radius:16px;
+    padding:20px 40px; font-size:22px; font-weight:600;
+  }
+
+  #status {
+    color:#fff; font-size:34px; font-weight:800; text-align:center;
+    text-shadow:0 2px 6px rgba(0,0,0,0.4); letter-spacing:1px;
+  }
+
+  #gearBtn {
+    position:absolute; top:16px; right:16px; z-index:20;
+    width:52px; height:52px; border-radius:50%;
+    background:rgba(0,0,0,0.35); border:none; color:#fff; font-size:24px;
+  }
+  #fullscreenBtn {
+    position:absolute; top:16px; left:16px; z-index:20;
+    width:52px; height:52px; border-radius:50%;
+    background:rgba(0,0,0,0.35); border:none; color:#fff; font-size:22px;
+  }
+
+  #debug {
+    position:absolute; bottom:10px; left:0; right:0;
+    text-align:center; color:rgba(255,255,255,0.55); font-size:12px;
+  }
+
+  #settingsPanel {
+    position:absolute; inset:0; background:rgba(10,10,10,0.95);
+    z-index:40; display:none; flex-direction:column;
+    padding:24px; color:#fff; overflow-y:auto;
+  }
+  #settingsPanel.open { display:flex; }
+  #settingsPanel h2 { font-size:22px; margin-bottom:20px; }
+  .row { margin-bottom:22px; }
+  .row label { display:flex; justify-content:space-between; font-size:15px; margin-bottom:8px; opacity:0.85; }
+  .row input[type=range] { width:100%; }
+  .btnRow { display:flex; gap:12px; margin-top:10px; }
+  .btnRow button {
+    flex:1; padding:16px; border:none; border-radius:12px; font-size:16px; font-weight:600;
+  }
+  #calibrateBtn { background:#444; color:#fff; }
+  #closeSettingsBtn { background:#2b7cff; color:#fff; }
+
+  video, canvas { display:none; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="status">TOQUE PARA INICIAR</div>
+  <button id="fullscreenBtn">⛶</button>
+  <button id="gearBtn">⚙️</button>
+  <div id="debug"></div>
+</div>
+
+<div id="startScreen">
+  <h1>Lâmpada de Reflexo</h1>
+  <p>Fixe o celular com a câmera virada para cima (por baixo da bola com areia, ou apontando pro teto). Toque abaixo para ligar a câmera e o som.</p>
+  <button id="startBtn">Ativar</button>
+  <div id="diag" style="margin-top:24px; font-size:13px; color:#8f8; font-family:monospace; max-width:320px; word-break:break-word;"></div>
+</div>
+
+<div id="settingsPanel">
+  <h2>Ajustes</h2>
+
+  <div class="row">
+    <label><span>Espera mínima (acende após)</span><span id="minWaitVal">2.0s</span></label>
+    <input type="range" id="minWait" min="0.5" max="10" step="0.5" value="2">
+  </div>
+
+  <div class="row">
+    <label><span>Espera máxima (acende após)</span><span id="maxWaitVal">5.0s</span></label>
+    <input type="range" id="maxWait" min="0.5" max="15" step="0.5" value="5">
+  </div>
+
+  <div class="row">
+    <label><span>Sensibilidade (sombra p/ apagar)</span><span id="sensVal">18%</span></label>
+    <input type="range" id="sensitivity" min="5" max="40" step="1" value="18">
+  </div>
+
+  <div class="row">
+    <label><span>Tempo mínimo aceso (evita apagar sozinho)</span><span id="minOnVal">0.4s</span></label>
+    <input type="range" id="minOn" min="0.1" max="2" step="0.1" value="0.4">
+  </div>
+
+  <div class="row">
+    <label><span>Volume</span><span id="volVal">80%</span></label>
+    <input type="range" id="volume" min="0" max="100" step="5" value="80">
+  </div>
+
+  <div class="btnRow">
+    <button id="calibrateBtn">Recalibrar luz ambiente</button>
+  </div>
+  <div class="btnRow">
+    <button id="switchCamBtn">Trocar câmera (frontal/traseira)</button>
+  </div>
+  <div class="btnRow">
+    <button id="closeSettingsBtn">Fechar e continuar</button>
+  </div>
+</div>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas" width="80" height="60"></canvas>
+
+<script>
+(function(){
+  const app = document.getElementById('app');
+  const status = document.getElementById('status');
+  const startScreen = document.getElementById('startScreen');
+  const startBtn = document.getElementById('startBtn');
+  const gearBtn = document.getElementById('gearBtn');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const settingsPanel = document.getElementById('settingsPanel');
+  const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+  const calibrateBtn = document.getElementById('calibrateBtn');
+  const debugEl = document.getElementById('debug');
+
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  // ---- Settings ----
+  const settings = {
+    minWait: 2.0,
+    maxWait: 5.0,
+    sensitivity: 18, // % drop in brightness to trigger
+    minOn: 0.4,
+    volume: 0.8
+  };
+
+  const minWaitSlider = document.getElementById('minWait');
+  const maxWaitSlider = document.getElementById('maxWait');
+  const sensSlider = document.getElementById('sensitivity');
+  const minOnSlider = document.getElementById('minOn');
+  const volSlider = document.getElementById('volume');
+
+  const minWaitVal = document.getElementById('minWaitVal');
+  const maxWaitVal = document.getElementById('maxWaitVal');
+  const sensVal = document.getElementById('sensVal');
+  const minOnVal = document.getElementById('minOnVal');
+  const volVal = document.getElementById('volVal');
+
+  minWaitSlider.addEventListener('input', e => { settings.minWait = parseFloat(e.target.value); minWaitVal.textContent = settings.minWait.toFixed(1)+'s'; });
+  maxWaitSlider.addEventListener('input', e => { settings.maxWait = parseFloat(e.target.value); maxWaitVal.textContent = settings.maxWait.toFixed(1)+'s'; });
+  sensSlider.addEventListener('input', e => { settings.sensitivity = parseFloat(e.target.value); sensVal.textContent = settings.sensitivity+'%'; });
+  minOnSlider.addEventListener('input', e => { settings.minOn = parseFloat(e.target.value); minOnVal.textContent = settings.minOn.toFixed(1)+'s'; });
+  volSlider.addEventListener('input', e => { settings.volume = parseFloat(e.target.value)/100; volVal.textContent = Math.round(settings.volume*100)+'%'; });
+
+  gearBtn.addEventListener('click', () => settingsPanel.classList.add('open'));
+  closeSettingsBtn.addEventListener('click', () => settingsPanel.classList.remove('open'));
+
+  fullscreenBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(()=>{});
+    } else {
+      document.exitFullscreen().catch(()=>{});
+    }
+  });
+
+  // ---- Audio (Web Audio API, sem arquivos externos) ----
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+
+  // Som de ALERTA (luz acendeu): bipe duplo, agudo, curto
+  function playAlertSound() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    [0, 0.13].forEach(delay => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(1100, now + delay);
+      gain.gain.setValueAtTime(0, now + delay);
+      gain.gain.linearRampToValueAtTime(settings.volume * 0.5, now + delay + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.09);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + 0.1);
+    });
+  }
+
+  // Som "morto" (luz apagou / acertou): grave, abafado, curto
+  function playDeadSound() {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 300;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(60, now + 0.25);
+    gain.gain.setValueAtTime(settings.volume * 0.7, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    osc.connect(filter).connect(gain).connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.3);
+  }
+
+  // ---- Câmera + detecção de sombra ----
+  let stream = null;
+  let baseline = null;         // média de luminosidade em ambiente (luz apagada)
+  let baselineLock = 0;        // timestamp até quando NAO atualizar baseline (logo apos detectar)
+  const SAMPLE_MS = 80;
+  // 'user' = câmera frontal (mesmo lado da tela) — correto quando a tela fica virada pra cima.
+  // Use 'environment' (câmera traseira) só se a montagem física de vocês for ao contrário.
+  let currentFacing = 'user';
+
+  async function startCamera() {
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: currentFacing, width: { ideal: 160 }, height: { ideal: 120 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    baseline = null; // recalibra ao trocar de câmera
+  }
+
+  function sampleBrightness() {
+    if (video.readyState < 2) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const frame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let total = 0;
+    const step = 4 * 4; // pula pixels pra ser mais leve
+    let count = 0;
+    for (let i = 0; i < frame.length; i += step) {
+      // luminosidade aproximada
+      total += (frame[i] * 0.299 + frame[i+1] * 0.587 + frame[i+2] * 0.114);
+      count++;
+    }
+    return total / count;
+  }
+
+  // ---- Máquina de estados ----
+  let state = 'OFF'; // OFF -> ON -> (detecta sombra) -> OFF ...
+  let onSince = 0;
+  let nextSwitchAt = 0;
+  let running = false;
+
+  function scheduleNextOn() {
+    const wait = (settings.minWait + Math.random() * Math.max(0, settings.maxWait - settings.minWait)) * 1000;
+    nextSwitchAt = performance.now() + wait;
+  }
+
+  function turnOn() {
+    state = 'ON';
+    onSince = performance.now();
+    app.classList.add('on');
+    status.textContent = 'AGORA!';
+    playAlertSound();
+  }
+
+  function turnOff(byDetection) {
+    state = 'OFF';
+    app.classList.remove('on');
+    status.textContent = 'ESPERE...';
+    if (byDetection) {
+      playDeadSound();
+      baselineLock = performance.now() + 600; // não recalibrar logo após o toque
+    }
+    scheduleNextOn();
+  }
+
+  function loop() {
+    if (!running) return;
+
+    const now = performance.now();
+    const b = sampleBrightness();
+
+    if (b !== null) {
+      if (baseline === null) baseline = b;
+
+      if (state === 'OFF') {
+        // atualiza baseline lentamente enquanto está apagado (se não estiver travado por detecção recente)
+        if (now > baselineLock) {
+          baseline = baseline * 0.9 + b * 0.1;
+        }
+        if (now >= nextSwitchAt) {
+          turnOn();
+        }
+      } else if (state === 'ON') {
+        const elapsedOn = now - onSince;
+        const drop = (baseline - b) / baseline; // fração de queda de luz
+        debugEl.textContent = 'luz:' + b.toFixed(0) + ' base:' + baseline.toFixed(0) + ' queda:' + (drop*100).toFixed(0) + '%';
+        if (elapsedOn > settings.minOn * 1000 && drop > settings.sensitivity / 100) {
+          turnOff(true);
+        }
+      }
+    }
+
+    setTimeout(loop, SAMPLE_MS);
+  }
+
+  const diag = document.getElementById('diag');
+  function log(msg) {
+    diag.textContent = msg;
+    console.log(msg);
+  }
+
+  startBtn.addEventListener('click', async () => {
+    log('Passo 1: verificando suporte do navegador...');
+
+    if (!window.isSecureContext) {
+      log('ERRO: a página não está em contexto seguro (isSecureContext=false). O link precisa começar com https://. Não abra o arquivo salvo localmente.');
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      log('ERRO: este navegador não expõe navigator.mediaDevices.getUserMedia nesta página. Tente atualizar o navegador ou testar em outro.');
+      return;
+    }
+
+    try {
+      log('Passo 2: iniciando áudio...');
+      ensureAudio();
+
+      log('Passo 3: pedindo permissão de câmera (deve aparecer um aviso do sistema agora)...');
+      await startCamera();
+
+      log('Passo 4: câmera conectada! Calibrando...');
+      startScreen.style.display = 'none';
+      running = true;
+      status.textContent = 'CALIBRANDO...';
+      setTimeout(() => {
+        scheduleNextOn();
+        status.textContent = 'ESPERE...';
+        loop();
+      }, 1200);
+    } catch (err) {
+      log('ERRO em: ' + (err.name || 'desconhecido') + ' — ' + (err.message || err));
+      status.textContent = 'ERRO NA CÂMERA';
+    }
+  });
+
+  calibrateBtn.addEventListener('click', () => {
+    baseline = null; // força recalcular no próximo frame
+  });
+
+  const switchCamBtn = document.getElementById('switchCamBtn');
+  switchCamBtn.addEventListener('click', async () => {
+    currentFacing = (currentFacing === 'user') ? 'environment' : 'user';
+    try {
+      await startCamera();
+      alert('Câmera trocada para: ' + (currentFacing === 'user' ? 'frontal' : 'traseira'));
+    } catch (err) {
+      alert('Não foi possível trocar de câmera: ' + err.message);
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
